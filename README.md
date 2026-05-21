@@ -1,23 +1,69 @@
 # dsa-pro
 
-A senior-engineer-grade Claude Code skill for picking and implementing the right **data structures + algorithms** for any problem, across any language or hardware target.
+[![skills.sh](https://skills.sh/b/ananyakaushik48/dsa-pro)](https://skills.sh/ananyakaushik48/dsa-pro)
 
-> Built for the persona of a veteran software engineer who treats Big-O reasoning as the floor, the memory hierarchy and stdlib idioms as the ceiling, and property tests + microbenchmarks as the proof.
+A senior-engineer **agent skill** that takes a software project from fuzzy intent to production-grade code — and keeps it production-grade as it evolves.
+
+Combines a full project-planning + SDLC playbook with a deep data-structure and algorithm catalogue. Built for the persona of a veteran engineer who treats Big-O reasoning as the floor, the memory hierarchy and stdlib idioms as the ceiling, and property tests + microbenchmarks as the proof.
+
+> Compatible with the [skills.sh](https://skills.sh) open agent skills ecosystem — works in Claude Code, Codex, Cursor, OpenCode, and 50+ other agents.
+
+## Install
+
+### Via the skills CLI (recommended)
+
+```bash
+# Install into the current project
+npx skills add ananyakaushik48/dsa-pro
+
+# Or install globally for all projects
+npx skills add ananyakaushik48/dsa-pro -g
+
+# Target a specific agent (e.g. Claude Code only)
+npx skills add ananyakaushik48/dsa-pro -a claude-code
+```
+
+The CLI auto-detects which agents you have installed and symlinks the skill into each one's skills directory. See the [skills CLI docs](https://github.com/vercel-labs/skills) for `--agent`, `--global`, `--copy`, and other flags.
+
+### Manual install (Claude Code)
+
+```bash
+git clone https://github.com/ananyakaushik48/dsa-pro.git ~/Projects/dsa-pro
+mkdir -p ~/.claude/skills
+ln -s ~/Projects/dsa-pro ~/.claude/skills/dsa-pro
+```
+
+Claude Code picks the skill up automatically the next time it scans skills.
 
 ## What's inside
 
 ```
 dsa-pro/
-├── SKILL.md                       # Trigger conditions, mental model, workflow
+├── SKILL.md                          # Trigger conditions, principles, workflow, file map
 ├── references/
-│   ├── catalogue.md               # Every structure family: invariants, Big-O, language idioms, traps
-│   ├── algorithms.md              # Sort / search / graph / string / DP / number / geometry / bit / streaming
-│   ├── decision-tree.md           # "I need X" → reach for Y, fall back to Z, watch out for trap T
-│   └── verification.md            # Invariants, property tests, fuzzing, microbench discipline
+│   ├── sdlc.md                       # 6 SDLC traditions (Agile, Lean, DevOps, TDD, Waterfall, DDD)
+│   ├── project-planning.md           # Discovery → decomposition → roadmap walkthrough
+│   ├── principles.md                 # SOLID, DRY, YAGNI, KISS, parse-don't-validate, quality attributes
+│   ├── templates.md                  # PRD, ADR, WBS, story, DoD, postmortem, traceability matrix, …
+│   ├── decision-tree.md              # want → reach for → fall back → trap (the structure picker)
+│   ├── catalogue.md                  # Every DS family: invariants, Big-O, language idioms, traps
+│   ├── algorithms.md                 # Sort / search / graph / string / DP / number / geometry / bit / stream
+│   └── verification.md               # Invariant checks, oracle pattern, property tests, microbench discipline
 └── scripts/
-    ├── proptest.ts / .py / .rs    # Property-test scaffolds (fast-check / Hypothesis / proptest)
-    └── bench.ts / .py / .rs       # Microbench scaffolds (tinybench / pytest-benchmark / criterion)
+    ├── scaffold_project.py           # Generate a planning directory (PRD, ADRs, WBS, risk register) from CLI args
+    ├── proptest.{py,ts,rs}           # Property-test scaffolds (hypothesis / fast-check / proptest)
+    └── bench.{py,ts,rs}              # Microbench scaffolds (pytest-benchmark / tinybench / criterion)
 ```
+
+## When the skill triggers
+
+**Planning / architecture / process.** "Help me plan a project," "what SDLC fits this?", "write me a PRD / ADR / spec," "how do I split this into modules / bounded contexts?", "review my architecture."
+
+**Data-structure / algorithm choice.** Anything that stores, indexes, searches, sorts, traverses, batches, ranks, joins, deduplicates, or streams data — when the answer isn't a one-liner. Choosing between `Map`, `Set`, `PriorityQueue`. Picking in-memory vs on-disk indexes. "Make it faster."
+
+If the task is `arr.push(x)` or `Object.keys(o)`, the skill is overkill.
+
+See [`SKILL.md`](SKILL.md) for the full trigger list and workflow.
 
 ## Why this exists
 
@@ -27,11 +73,18 @@ Most "data structures" references stop at "here's a BST, here's a hash table." T
 - **Treats the stdlib as the default.** `HashMap`, `BTreeMap`, `priority_queue` — beating them is a project, not a function. Custom containers are reserved for what the stdlib provides poorly: cache layout, on-disk format, concurrency model, persistence.
 - **Language-portable.** Pseudocode + idiom notes for C / C++ / Rust / Go / Java / Python / TypeScript. Calls out gotchas (Python `heapq` is min-only; Rust `BinaryHeap` is max; Java `PriorityQueue` is min by natural order; etc.).
 - **Hardware-aware.** L1/L2/L3/DRAM/NVMe/network latency ratios drive structure choice as much as Big-O. SoA vs. AoS, cache lines, branch prediction, allocator behavior — all live alongside the code.
+- **SDLC-honest.** A regulated medical device plan is not a Lean MVP plan. The skill matches process to risk and doesn't pretend Agile fits every project.
 - **Verifiable.** Property-test scaffolds use the oracle pattern (test candidate against a trivially-correct reference) plus invariant checks after every op. Microbench scaffolds sweep working-set sizes and key distributions, defeat DCE, and report median + dispersion.
 
 ## Scope
 
-Includes:
+**Project planning & SDLC**
+
+- Discovery briefs, PRDs, ADRs, work breakdown, roadmaps, risk registers, traceability matrices, postmortems, module specs.
+- Agile, Lean / MVP, DevOps / CI-CD, TDD / property-test-first, Waterfall (regulated medical & finance), DDD / hexagonal — with anti-patterns and when-not-to-use.
+- Verification plans tied to SDLC cadence.
+
+**Data structures**
 
 - **Contiguous**: dynamic array, ring buffer, deque, packed bitset, slot map, columnar / SoA.
 - **Linked**: singly / doubly / skip list / intrusive.
@@ -49,7 +102,7 @@ Includes:
 - **Spatial**: KD-tree, R-tree / R*-tree, quadtree / octree, BVH, Z-order / Hilbert.
 - **Text-edit**: rope, gap buffer, piece table, CRDT pointers.
 
-Algorithms (the central utility — see [`references/algorithms.md`](references/algorithms.md)):
+**Algorithms**
 
 - **Sort**: introsort, pdqsort, Timsort, heapsort, mergesort, counting / radix / bucket, external merge, parallel.
 - **Selection**: quickselect, median of medians, top-K via heap, order-statistic tree.
@@ -63,31 +116,6 @@ Algorithms (the central utility — see [`references/algorithms.md`](references/
 - **Streaming / online**: reservoir sampling (Algorithm R / L), sliding window min / max, Misra-Gries, Welford, online median.
 - **Randomization**: Fisher-Yates, Vose's alias method, Las Vegas vs Monte Carlo.
 
-## Install
-
-### Claude Code (local)
-
-The skill loads when its directory lives at `~/.claude/skills/<name>/` (or wherever Claude Code's skill loader points). If you already have the convention of project-checked-in skills with symlinks (e.g., `~/.claude/skills/<name> -> ../.agents/skills/<name>`), mirror it:
-
-```bash
-# Clone the repo
-git clone https://github.com/<you>/dsa-pro.git ~/Projects/dsa-pro
-
-# Symlink into the Claude skills location
-ln -s ~/Projects/dsa-pro ~/.claude/skills/dsa-pro
-
-# Verify Claude Code sees it
-claude --print "list available skills" 2>/dev/null | grep dsa-pro
-```
-
-### skills.sh (Vercel registry)
-
-Once published to GitHub, submit via the [skills.sh](https://skills.sh) registry. The `SKILL.md` frontmatter conforms to the registry schema (`name`, `description`, `license`, `metadata.author`, `metadata.version`, `metadata.triggers`).
-
-## When the skill triggers
-
-The skill self-selects when a task involves any of: storing, indexing, searching, sorting, traversing, batching, ranking, joining, deduplicating, streaming — *and* the answer is not a one-liner. See [`SKILL.md`](SKILL.md) for the full trigger list.
-
 ## Contributing
 
 Pull requests welcome. Conventions:
@@ -99,4 +127,4 @@ Pull requests welcome. Conventions:
 
 ## License
 
-MIT. See [`LICENSE`](LICENSE).
+MIT — see [`LICENSE`](LICENSE).

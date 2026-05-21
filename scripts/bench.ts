@@ -1,110 +1,202 @@
-// Microbench scaffold (TypeScript + tinybench).
-//
-// Install: npm i -D tinybench
-// Run:     npx tsx bench.ts
-//
-// Disciplines applied:
-//   - Distribution sweep: sequential / random / zipfian
-//   - Working-set sweep: tiny / fits-L1 / fits-L2 / spills to DRAM
-//   - Sink to defeat DCE
-//   - Report median + (max - min) / median (relative range)
+/**
+ * Microbench scaffold (TypeScript / tinybench) with the discipline from
+ * references/verification.md → Microbench discipline.
+ *
+ * What this scaffold gets right (so you don't have to remember every time):
+ *   - Defeats dead-code elimination by accumulating a side-effecting result.
+ *   - Sweeps the access pattern: sequential, random, zipfian.
+ *   - Sweeps the working-set size to expose cache effects.
+ *   - Reports median + variance (tinybench does this).
+ *   - Warmup phase to wait out V8 PGO / inlining transitions.
+ *
+ * To adapt:
+ *   1. Replace `MyStructure` with your real impl.
+ *   2. Adjust `WORKLOAD_SIZES` and `DISTRIBUTIONS` to match what you care about.
+ *   3. Add benches for the specific operations on your hot path.
+ *
+ * Install:
+ *   npm install --save-dev tinybench
+ *
+ * Run:
+ *   npx tsx scripts/bench.ts
+ *
+ * Hostile environments:
+ *   - Disable HW prefetch / CPU boost where you can.
+ *   - On Linux: `taskset -c 0 nice -n -20 npx tsx scripts/bench.ts`.
+ *   - On macOS (M-series): noise is unavoidable from short runs — use
+ *     longer durations (set `time: 2000` or higher).
+ */
 
-import { Bench } from 'tinybench'
+import { Bench } from "tinybench";
 
-// Anti-DCE sink. Without something like this, the JIT can elide the loop body.
-let SINK = 0
-const consume = (x: number) => { SINK ^= x | 0 }
+// ---------------------------------------------------------------------------
+// 1. Replace with your real structure.
+// ---------------------------------------------------------------------------
 
-// Pareto-ish heavy-tail (zipfian-ish): few keys hit very often.
-function zipfianKeys(n: number, alpha = 1.1): number[] {
-  const ranks = new Array(n).fill(0).map((_, i) => 1 / Math.pow(i + 1, alpha))
-  const total = ranks.reduce((a, b) => a + b, 0)
-  const cdf: number[] = []
-  let acc = 0
-  for (const r of ranks) { acc += r / total; cdf.push(acc) }
-  const out = new Array(n)
-  for (let i = 0; i < n; i++) {
-    const u = Math.random()
-    let lo = 0, hi = cdf.length
-    while (lo < hi) { const m = (lo + hi) >> 1; if (cdf[m] < u) lo = m + 1; else hi = m }
-    out[i] = lo
+class MyStructure {
+  private items = new Map<number, number>();
+
+  insert(k: number, v: number): void {
+    this.items.set(k, v);
   }
-  return out
+
+  lookup(k: number): number | undefined {
+    return this.items.get(k);
+  }
+
+  delete(k: number): void {
+    this.items.delete(k);
+  }
 }
 
-function randomKeys(n: number): number[] {
-  const a = new Array(n)
-  for (let i = 0; i < n; i++) a[i] = (Math.random() * 0x7fffffff) | 0
-  return a
+// ---------------------------------------------------------------------------
+// 2. Workload generators. Same shape for every bench — change the
+//    distribution to expose how the structure responds to different access
+//    patterns.
+// ---------------------------------------------------------------------------
+
+const WORKLOAD_SIZES = [1_000, 10_000, 100_000];
+type Distribution = "sequential" | "random" | "zipfian";
+const DISTRIBUTIONS: Distribution[] = ["sequential", "random", "zipfian"];
+
+// Mulberry32 — small, deterministic PRNG (so benches are reproducible).
+function mulberry32(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6D2B79F5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
-function seqKeys(n: number): number[] {
-  const a = new Array(n)
-  for (let i = 0; i < n; i++) a[i] = i
-  return a
-}
-
-const distributions = {
-  sequential: seqKeys,
-  random: randomKeys,
-  zipfian: (n: number) => zipfianKeys(n, 1.1),
-}
-
-const workingSets = [
-  { name: '4 K (L1-ish)', n: 4_000 },
-  { name: '64 K (L2-ish)', n: 64_000 },
-  { name: '1 M (DRAM)', n: 1_000_000 },
-]
-
-// ─── Replace with the candidate(s) you want to compare. ───
-function buildCandidateMap(): Map<number, number> { return new Map() }
-function buildOracleObject(): Record<number, number> { return Object.create(null) }
-
-async function runOnce(label: string, n: number, keys: number[]) {
-  const bench = new Bench({ time: 2_000, warmupTime: 500, warmupIterations: 32 })
-
-  bench.add(`${label}  Map.set`, () => {
-    const m = buildCandidateMap()
-    for (let i = 0; i < n; i++) m.set(keys[i], i)
-    consume(m.size)
-  })
-
-  bench.add(`${label}  Object[] write`, () => {
-    const o = buildOracleObject()
-    for (let i = 0; i < n; i++) o[keys[i]] = i
-    consume(Object.keys(o).length)
-  })
-
-  bench.add(`${label}  Map.get`, () => {
-    const m = buildCandidateMap()
-    for (let i = 0; i < n; i++) m.set(keys[i], i)
-    let acc = 0
-    for (let i = 0; i < n; i++) acc += m.get(keys[i]) ?? 0
-    consume(acc)
-  })
-
-  await bench.warmup()
-  await bench.run()
-  console.table(
-    bench.tasks.map((t) => ({
-      name: t.name,
-      'p50 (ns)': t.result!.mean ? (t.result!.mean * 1_000_000).toFixed(1) : '-',
-      'rel. range': t.result!.mean
-        ? (((t.result!.max - t.result!.min) / t.result!.mean) * 100).toFixed(1) + '%'
-        : '-',
-      'samples': t.result!.samples.length,
-    })),
-  )
-}
-
-;(async () => {
-  for (const [distName, distFn] of Object.entries(distributions)) {
-    for (const ws of workingSets) {
-      const keys = distFn(ws.n)
-      console.log(`\n--- ${distName} keys, ${ws.name} ---`)
-      await runOnce(`${distName}/${ws.name}`, ws.n, keys)
+function genKeys(n: number, distribution: Distribution, seed = 0xC0FFEE): Int32Array {
+  const out = new Int32Array(n);
+  const rand = mulberry32(seed);
+  switch (distribution) {
+    case "sequential": {
+      for (let i = 0; i < n; i++) out[i] = i;
+      return out;
+    }
+    case "random": {
+      for (let i = 0; i < n; i++) out[i] = (rand() * n * 10) | 0;
+      return out;
+    }
+    case "zipfian": {
+      // Approximate Zipf via inverse-CDF; alpha ≈ 1.5.
+      const alpha = 1.5;
+      const denom = Math.pow(n, 1 - alpha) - 1;
+      for (let i = 0; i < n; i++) {
+        const u = rand();
+        const val = Math.pow(u * denom + 1, 1 / (1 - alpha));
+        out[i] = (val | 0) % (n * 10);
+      }
+      return out;
     }
   }
-  // Force-print sink so the optimizer can't elide it.
-  console.log('sink:', SINK)
-})()
+}
+
+function populate(s: MyStructure, keys: Int32Array): void {
+  for (let i = 0; i < keys.length; i++) {
+    s.insert(keys[i]!, i);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 3. Black-hole sink. V8 can prove an unused result is dead and erase the
+//    work. Accumulate into a module-level var and print it at the end.
+// ---------------------------------------------------------------------------
+
+let sink = 0;
+
+function consume(x: unknown): void {
+  if (x === undefined || x === null) sink ^= 1;
+  else if (typeof x === "number") sink ^= x | 0;
+  else if (typeof x === "string") sink ^= x.length;
+  else sink ^= 1;
+}
+
+// ---------------------------------------------------------------------------
+// 4. Build a parametrized bench across (size, distribution).
+// ---------------------------------------------------------------------------
+
+async function main(): Promise<void> {
+  console.log("# tinybench scaffold");
+
+  for (const n of WORKLOAD_SIZES) {
+    for (const dist of DISTRIBUTIONS) {
+      const bench = new Bench({
+        // Warmup defends against V8 PGO not having converged.
+        warmupIterations: 100,
+        warmupTime: 100,
+        time: 1000, // measure each bench for ~1s
+      });
+
+      const insertKeys = genKeys(n, dist, 0xFACE);
+
+      bench.add(`insert N=${n} dist=${dist}`, () => {
+        const s = new MyStructure();
+        for (let i = 0; i < insertKeys.length; i++) {
+          s.insert(insertKeys[i]!, i);
+        }
+        consume(insertKeys.length);
+      });
+
+      // Lookup bench: pre-populated structure, random query keys (separate seed).
+      const populated = new MyStructure();
+      populate(populated, insertKeys);
+      const queryKeys = genKeys(n, "random", 0xBEEF);
+
+      bench.add(`lookup N=${n} dist=${dist}`, () => {
+        for (let i = 0; i < queryKeys.length; i++) {
+          consume(populated.lookup(queryKeys[i]!));
+        }
+      });
+
+      // Mixed workload: 80% lookup, 15% insert, 5% delete.
+      const mixedKeys = genKeys(n, "random", 0xDEAD);
+      const rand = mulberry32(0xBEEF);
+      const rolls = new Float32Array(n);
+      for (let i = 0; i < n; i++) rolls[i] = rand();
+
+      bench.add(`mixed (80r/15w/5d) N=${n} dist=${dist}`, () => {
+        const s = new MyStructure();
+        populate(s, insertKeys);
+        for (let i = 0; i < mixedKeys.length; i++) {
+          const k = mixedKeys[i]!;
+          const r = rolls[i]!;
+          if (r < 0.8) consume(s.lookup(k));
+          else if (r < 0.95) s.insert(k, 1);
+          else s.delete(k);
+        }
+      });
+
+      await bench.run();
+
+      console.log(`\n## N=${n} dist=${dist}`);
+      console.table(
+        bench.tasks.map(({ name, result }) => ({
+          name,
+          "hz (ops/s)": result?.hz.toFixed(2) ?? "—",
+          "mean (ns)": result ? (result.mean * 1e6).toFixed(2) : "—",
+          "p99 (ns)": result?.p99 ? (result.p99 * 1e6).toFixed(2) : "—",
+          rme: result?.rme?.toFixed(2) ?? "—",
+          samples: result?.samples?.length ?? 0,
+        })),
+      );
+    }
+  }
+
+  // Print env for the report. ALWAYS report alongside numbers (see
+  // references/verification.md → Bench reporting template).
+  console.log("\n# Bench environment");
+  console.log(`# Node: ${process.version}`);
+  console.log(`# Platform: ${process.platform} ${process.arch}`);
+  console.log(`# Sink (defeats DCE): 0x${sink.toString(16)}`);
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});

@@ -1,143 +1,233 @@
-//! Property-test scaffold (Rust + proptest).
-//!
-//! Cargo.toml:
-//!   [dev-dependencies]
-//!   proptest = "1"
-//!
-//! Run: cargo test --release --test proptest
-//!
-//! Pattern: oracle comparison + invariant check after every op.
-//! Adapt `MyStructure`, `OracleImpl`, and `Op`.
+// Property-test scaffold (Rust / proptest) using the oracle pattern.
+//
+// The oracle pattern is the single highest-value test for a custom data
+// structure (see references/verification.md). Generate a random sequence of
+// operations, apply it to both your custom structure and a trivially correct
+// reference (the "oracle"), and assert that observable behavior matches after
+// every op.
+//
+// To adapt:
+//   1. Replace `MyStructure` and `Oracle` with your real types.
+//   2. Edit the `Op` enum + the strategy to match your API.
+//   3. Implement `apply_op` for both sides.
+//   4. Implement `observable_state` so the assert compares everything the caller can see.
+//   5. Implement `check_invariants` to encode the structure's defining property.
+//
+// Cargo.toml:
+//   [dev-dependencies]
+//   proptest = "1.4"
+//
+// Run:
+//   cargo test --test proptest -- --nocapture
+//
+// (Place this file at `tests/proptest.rs` or run as a regular test module
+// inside `src/` with `#[cfg(test)] mod proptest { ... }`.)
 
+use std::collections::BTreeMap;
+
+use proptest::collection::vec;
 use proptest::prelude::*;
-use std::collections::HashMap;
 
-// ─── (1) Replace with the candidate ───
-#[derive(Default)]
-struct MyStructure<V> {
-    data: HashMap<i64, V>,
+// ---------------------------------------------------------------------------
+// 1. Replace these with your real types.
+// ---------------------------------------------------------------------------
+
+#[derive(Default, Debug, Clone)]
+pub struct MyStructure {
+    items: BTreeMap<i32, String>,
 }
 
-impl<V: Clone + PartialEq> MyStructure<V> {
-    fn insert(&mut self, k: i64, v: V) {
-        self.data.insert(k, v);
+impl MyStructure {
+    pub fn new() -> Self {
+        Self::default()
     }
-    fn delete(&mut self, k: i64) -> bool {
-        self.data.remove(&k).is_some()
+    pub fn insert(&mut self, k: i32, v: String) {
+        self.items.insert(k, v);
     }
-    fn lookup(&self, k: i64) -> Option<&V> {
-        self.data.get(&k)
+    pub fn delete(&mut self, k: i32) {
+        self.items.remove(&k);
     }
-    fn size(&self) -> usize {
-        self.data.len()
+    pub fn lookup(&self, k: i32) -> Option<&String> {
+        self.items.get(&k)
     }
-
-    /// Encode the structure's defining invariant(s). Return false on violation.
-    fn check_invariants(&self) -> bool {
-        // e.g., for BST: in-order traversal is strictly sorted
-        // for heap: every parent <= children
-        // for hash table: load factor <= configured max; all inserted keys retrievable
-        true
+    pub fn iter_sorted(&self) -> Vec<(i32, String)> {
+        self.items.iter().map(|(k, v)| (*k, v.clone())).collect()
     }
-}
-
-// ─── (2) Reference: trivially correct, slow is fine ───
-#[derive(Default)]
-struct OracleImpl<V> {
-    data: Vec<(i64, V)>,
-}
-
-impl<V: Clone + PartialEq> OracleImpl<V> {
-    fn insert(&mut self, k: i64, v: V) {
-        if let Some(slot) = self.data.iter_mut().find(|(kk, _)| *kk == k) {
-            slot.1 = v;
-        } else {
-            self.data.push((k, v));
-        }
-    }
-    fn delete(&mut self, k: i64) -> bool {
-        if let Some(pos) = self.data.iter().position(|(kk, _)| *kk == k) {
-            self.data.remove(pos);
-            true
-        } else {
-            false
-        }
-    }
-    fn lookup(&self, k: i64) -> Option<&V> {
-        self.data.iter().find(|(kk, _)| *kk == k).map(|(_, v)| v)
-    }
-    fn size(&self) -> usize {
-        self.data.len()
+    pub fn check_invariants(&self) -> bool {
+        // Encode the structure's defining property here. For a real custom
+        // impl this might be balance, load-factor bounds, etc.
+        // BTreeMap already guarantees ordering — placeholder check:
+        let keys: Vec<_> = self.items.keys().copied().collect();
+        keys.windows(2).all(|w| w[0] < w[1])
     }
 }
 
-// ─── (3) Operations the property test will generate ───
-#[derive(Clone, Debug)]
-enum Op {
-    Insert(i64, i64),
-    Delete(i64),
-    Lookup(i64),
+#[derive(Default, Debug, Clone)]
+pub struct Oracle {
+    items: BTreeMap<i32, String>,
+}
+
+impl Oracle {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn insert(&mut self, k: i32, v: String) {
+        self.items.insert(k, v);
+    }
+    pub fn delete(&mut self, k: i32) {
+        self.items.remove(&k);
+    }
+    pub fn lookup(&self, k: i32) -> Option<&String> {
+        self.items.get(&k)
+    }
+    pub fn iter_sorted(&self) -> Vec<(i32, String)> {
+        self.items.iter().map(|(k, v)| (*k, v.clone())).collect()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 2. Op model. Edit to match your API.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub enum Op {
+    Insert(i32, String),
+    Delete(i32),
+    Lookup(i32),
+    Iter,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ObservableResult {
+    None,
+    Lookup(Option<String>),
+    Iter(Vec<(i32, String)>),
 }
 
 fn op_strategy() -> impl Strategy<Value = Op> {
     prop_oneof![
-        (any::<i64>(), any::<i64>()).prop_map(|(k, v)| Op::Insert(k, v)),
-        any::<i64>().prop_map(Op::Delete),
-        any::<i64>().prop_map(Op::Lookup),
+        (-100i32..=100, ".{0,8}").prop_map(|(k, v)| Op::Insert(k, v)),
+        (-100i32..=100).prop_map(Op::Delete),
+        (-100i32..=100).prop_map(Op::Lookup),
+        Just(Op::Iter),
     ]
 }
 
-fn apply_and_compare(
-    op: &Op,
-    candidate: &mut MyStructure<i64>,
-    oracle: &mut OracleImpl<i64>,
-) -> Result<(), TestCaseError> {
+// ---------------------------------------------------------------------------
+// 3. Apply + observe.
+// ---------------------------------------------------------------------------
+
+fn apply_op_custom(s: &mut MyStructure, op: &Op) -> ObservableResult {
     match op {
         Op::Insert(k, v) => {
-            candidate.insert(*k, *v);
-            oracle.insert(*k, *v);
+            s.insert(*k, v.clone());
+            ObservableResult::None
         }
         Op::Delete(k) => {
-            let a = candidate.delete(*k);
-            let b = oracle.delete(*k);
-            prop_assert_eq!(a, b, "delete({}) disagreed", k);
+            s.delete(*k);
+            ObservableResult::None
         }
-        Op::Lookup(k) => {
-            let a = candidate.lookup(*k).copied();
-            let b = oracle.lookup(*k).copied();
-            prop_assert_eq!(a, b, "lookup({}) disagreed", k);
-        }
+        Op::Lookup(k) => ObservableResult::Lookup(s.lookup(*k).cloned()),
+        Op::Iter => ObservableResult::Iter(s.iter_sorted()),
     }
-    prop_assert_eq!(candidate.size(), oracle.size());
-    prop_assert!(candidate.check_invariants(), "invariants broken after {:?}", op);
-    Ok(())
 }
+
+fn apply_op_oracle(s: &mut Oracle, op: &Op) -> ObservableResult {
+    match op {
+        Op::Insert(k, v) => {
+            s.insert(*k, v.clone());
+            ObservableResult::None
+        }
+        Op::Delete(k) => {
+            s.delete(*k);
+            ObservableResult::None
+        }
+        Op::Lookup(k) => ObservableResult::Lookup(s.lookup(*k).cloned()),
+        Op::Iter => ObservableResult::Iter(s.iter_sorted()),
+    }
+}
+
+fn observable_state(s: &MyStructure) -> Vec<(i32, String)> {
+    s.iter_sorted()
+}
+
+// ---------------------------------------------------------------------------
+// 4. The actual property tests.
+// ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig {
-        cases: 500,
-        max_shrink_iters: 1_000,
+        cases: 256,
+        max_shrink_iters: 10_000,
         .. ProptestConfig::default()
     })]
 
-    /// Random op sequences must produce identical observable behavior.
+    /// Oracle pattern: for every op sequence, observable behavior matches the
+    /// oracle and invariants hold after every step.
     #[test]
-    fn ops_match_oracle(ops in prop::collection::vec(op_strategy(), 0..200)) {
-        let mut candidate = MyStructure::default();
-        let mut oracle = OracleImpl::default();
+    fn oracle_matches(ops in vec(op_strategy(), 0..200)) {
+        let mut custom = MyStructure::new();
+        let mut oracle = Oracle::new();
         for op in &ops {
-            apply_and_compare(op, &mut candidate, &mut oracle)?;
+            let r_custom = apply_op_custom(&mut custom, op);
+            let r_oracle = apply_op_oracle(&mut oracle, op);
+            prop_assert_eq!(&r_custom, &r_oracle,
+                "op {:?} produced {:?} on custom but {:?} on oracle", op, r_custom, r_oracle);
+            prop_assert!(custom.check_invariants(),
+                "invariants violated after op {:?}; state {:?}", op, observable_state(&custom));
+        }
+        prop_assert_eq!(observable_state(&custom), oracle.iter_sorted());
+    }
+
+    /// Invariants hold after every op even without comparing to an oracle.
+    #[test]
+    fn invariants_hold(ops in vec(op_strategy(), 0..200)) {
+        let mut s = MyStructure::new();
+        for op in &ops {
+            apply_op_custom(&mut s, op);
+            prop_assert!(s.check_invariants(),
+                "invariants violated after op {:?}", op);
         }
     }
 
-    /// Insert-then-delete in any permutation leaves structure empty.
+    /// Every key inserted is findable; deleting all keys clears them all.
     #[test]
-    fn insert_delete_roundtrip(keys in prop::collection::vec(any::<i64>(), 0..200)) {
-        let mut s: MyStructure<i64> = MyStructure::default();
-        let unique: std::collections::HashSet<i64> = keys.iter().copied().collect();
-        for &k in &unique { s.insert(k, k); }
-        for &k in &unique { s.delete(k); }
-        prop_assert_eq!(s.size(), 0);
-        prop_assert!(s.check_invariants());
+    fn insert_delete_roundtrip(items in vec((any::<i32>(), ".{0,8}"), 0..200)) {
+        let mut s = MyStructure::new();
+        let mut dedup: BTreeMap<i32, String> = BTreeMap::new();
+        for (k, v) in &items {
+            s.insert(*k, v.clone());
+            dedup.insert(*k, v.clone());
+        }
+        for (k, v) in &dedup {
+            prop_assert_eq!(s.lookup(*k), Some(v));
+        }
+        for k in dedup.keys() {
+            s.delete(*k);
+        }
+        for k in dedup.keys() {
+            prop_assert_eq!(s.lookup(*k), None);
+        }
     }
 }
+
+// ---------------------------------------------------------------------------
+// 5. Concurrency stress.
+//
+// For lock-free / concurrent structures, single-threaded property tests miss
+// the entire failure mode. Pair this scaffold with `loom` or `shuttle` to
+// exhaustively explore interleavings. Example skeleton:
+//
+//   #[cfg(loom)]
+//   #[test]
+//   fn lockfree_linearizable() {
+//       loom::model(|| {
+//           let s = std::sync::Arc::new(MyLockFreeStructure::new());
+//           let s2 = s.clone();
+//           let t1 = loom::thread::spawn(move || s.insert(1, "a".into()));
+//           let t2 = loom::thread::spawn(move || { let _ = s2.lookup(1); });
+//           t1.join().unwrap();
+//           t2.join().unwrap();
+//           assert!(s.check_invariants());
+//       });
+//   }

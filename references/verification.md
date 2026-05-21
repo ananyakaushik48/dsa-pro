@@ -10,29 +10,29 @@ How to actually convince yourself a non-trivial structure works, and how to know
 
 ## Invariants by family
 
-| Family | Invariant |
-|--------|-----------|
-| BST | `for every node: max(left subtree) < node.key < min(right subtree)` |
-| AVL | `\|height(left) - height(right)\| ≤ 1` at every node; height correct |
-| Red-black | Root black; red has only black children; every root→null path has the same black height |
-| Min-heap | `h[i] ≤ h[2i+1] && h[i] ≤ h[2i+2]` for all valid i; size matches |
-| Hash table | Load factor ≤ configured max; for every (k, v) — `lookup(k) == Some(v)`; for k not inserted — `lookup(k) == None`; no tombstone count exceeds threshold |
-| B-tree | Leaves at same depth; node key count in [t-1, 2t-1] except root; keys per node sorted |
-| LSM | Each level non-overlapping (in leveled compaction); MemTable ≤ flush threshold; level sizes monotone non-decreasing |
-| Segment tree | Aggregate at internal node = combine(left.agg, right.agg); lazy clean after push-down |
-| Fenwick | After `update(i, d)`, `query(i) - query(i-1)` reflects the cumulative delta |
-| DSU | Path from any node to its root is well-defined; rank/size at root is correct; `find(find(x)) == find(x)` |
-| Trie | Every leaf (or marked node) represents an inserted key; path from root spells exactly that key |
-| Bloom filter | After insert(k), `contains(k) == true`; FPR over a random sample ≤ target FPR within statistical bounds |
-| HyperLogLog | After bulk insert of n distinct elements, `\|estimate - n\| / n ≤ ~1.04 / √(2^p)` 65% of the time |
-| Persistent vector | After `update(v, i, x)`, original v is unchanged and `get(v, i) != x`; new version `get(v', i) == x` |
-| Lock-free queue | Linearizable: every operation has a single linearization point; FIFO order preserved across enqueue / dequeue pairs |
+| Family            | Invariant                                                                                                                                               |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| BST               | `for every node: max(left subtree) < node.key < min(right subtree)`                                                                                     |
+| AVL               | `|height(left) - height(right)| ≤ 1` at every node; height correct                                                                                      |
+| Red-black         | Root black; red has only black children; every root→null path has the same black height                                                                 |
+| Min-heap          | `h[i] ≤ h[2i+1] && h[i] ≤ h[2i+2]` for all valid i; size matches                                                                                        |
+| Hash table        | Load factor ≤ configured max; for every (k, v) — `lookup(k) == Some(v)`; for k not inserted — `lookup(k) == None`; no tombstone count exceeds threshold |
+| B-tree            | Leaves at same depth; node key count in [t-1, 2t-1] except root; keys per node sorted                                                                   |
+| LSM               | Each level non-overlapping (in leveled compaction); MemTable ≤ flush threshold; level sizes monotone non-decreasing                                     |
+| Segment tree      | Aggregate at internal node = combine(left.agg, right.agg); lazy clean after push-down                                                                   |
+| Fenwick           | After `update(i, d)`, `query(i) - query(i-1)` reflects the cumulative delta                                                                             |
+| DSU               | Path from any node to its root is well-defined; rank/size at root is correct; `find(find(x)) == find(x)`                                                |
+| Trie              | Every leaf (or marked node) represents an inserted key; path from root spells exactly that key                                                          |
+| Bloom filter      | After insert(k), `contains(k) == true`; FPR over a random sample ≤ target FPR within statistical bounds                                                 |
+| HyperLogLog       | After bulk insert of n distinct elements, `|estimate - n| / n ≤ ~1.04 / √(2^p)` 65% of the time                                                         |
+| Persistent vector | After `update(v, i, x)`, original v is unchanged and `get(v, i) != x`; new version `get(v', i) == x`                                                    |
+| Lock-free queue   | Linearizable: every operation has a single linearization point; FIFO order preserved across enqueue / dequeue pairs                                     |
 
 ## Property test patterns
 
 ### The oracle pattern (the single most useful test)
 
-```text
+```
 @property
 def test_oracle(ops: List[Op]):
   custom = MyStructure()
@@ -49,7 +49,7 @@ def test_oracle(ops: List[Op]):
 
 ### Invariant-after-every-op
 
-```text
+```
 @property
 def test_invariants_hold(ops):
   s = MyStructure()
@@ -60,7 +60,7 @@ def test_invariants_hold(ops):
 
 ### Round-trip / inverse
 
-```text
+```
 @property
 def test_insert_delete_roundtrip(items):
   s = MyStructure()
@@ -72,7 +72,7 @@ def test_insert_delete_roundtrip(items):
 
 ### Equivalence under reordering
 
-```text
+```
 @property
 def test_set_semantics(items):
   for perm in permutations(items, sample=10):
@@ -87,14 +87,14 @@ When a test fails, the framework shrinks the operation sequence to a minimal cou
 
 ## Frameworks per language
 
-| Language | Property | Microbench | Fuzzer |
-|----------|----------|------------|--------|
-| TypeScript / JS | `fast-check` | `tinybench`, `mitata` | `jazzer.js`, `@jsfuzz/core` |
-| Python | `hypothesis` | `pytest-benchmark`, `asv` | `atheris`, `python-afl` |
-| Rust | `proptest`, `quickcheck` | `criterion`, `divan` | `cargo-fuzz`, `afl.rs` |
-| Java / JVM | `jqwik`, `junit-quickcheck` | `JMH` | `jazzer` |
-| C++ | `rapidcheck` | Google Benchmark, `nanobench` | `libFuzzer`, AFL++ |
-| Go | `testing/quick`, `gopter` | `testing.B`, `benchstat` | `go test -fuzz` |
+| Language        | Property                    | Microbench                    | Fuzzer                      |
+| --------------- | --------------------------- | ----------------------------- | --------------------------- |
+| TypeScript / JS | `fast-check`                | `tinybench`, `mitata`         | `jazzer.js`, `@jsfuzz/core` |
+| Python          | `hypothesis`                | `pytest-benchmark`, `asv`     | `atheris`, `python-afl`     |
+| Rust            | `proptest`, `quickcheck`    | `criterion`, `divan`          | `cargo-fuzz`, `afl.rs`      |
+| Java / JVM      | `jqwik`, `junit-quickcheck` | `JMH`                         | `jazzer`                    |
+| C++             | `rapidcheck`                | Google Benchmark, `nanobench` | `libFuzzer`, AFL++          |
+| Go              | `testing/quick`, `gopter`   | `testing.B`, `benchstat`      | `go test -fuzz`             |
 
 See drop-in scaffolds: `scripts/proptest.{ts,py,rs}`, `scripts/bench.{ts,py,rs}`.
 
@@ -102,13 +102,14 @@ See drop-in scaffolds: `scripts/proptest.{ts,py,rs}`, `scripts/bench.{ts,py,rs}`
 
 When two implementations claim equivalence (your fast custom code vs. a trusted baseline, or two ports of the same algorithm), feed them the same random inputs and compare:
 
-```text
+```
 generate input (small enough that the reference finishes)
 run candidate, run oracle
 assert candidate.result == oracle.result
 ```
 
 Beyond random:
+
 - **Mutation-guided differential fuzzing** (libFuzzer style) — coverage-guided generation finds inputs that exercise new code paths.
 - **Structure-aware fuzzing** — generate valid op sequences (not random bytes) for richer coverage.
 
@@ -135,7 +136,7 @@ Common pitfalls (in order of how badly they wreck your numbers):
 
 A bench report is useless without context. Always include:
 
-```text
+```
 Structure:  <name and config (capacity, load factor, key type)>
 Workload:   <op mix, key distribution, value size, N>
 Environment: <CPU, cores, RAM, kernel, libc, allocator, language/runtime version>

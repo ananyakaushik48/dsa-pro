@@ -1,102 +1,268 @@
-// Property-test scaffold (TypeScript + fast-check).
-//
-// Install: npm i -D fast-check vitest          (or jest / mocha)
-// Run:     npx vitest run proptest.test.ts
-//
-// Pattern: oracle comparison + invariant check after every op.
-// Adapt `MyStructure`, `OracleImpl`, `Op`, and `applyAndCompare`.
+/**
+ * Property-test scaffold (TypeScript / fast-check) using the oracle pattern.
+ *
+ * The oracle pattern is the single highest-value test for a custom data
+ * structure (see references/verification.md). Generate a random sequence of
+ * operations, apply it to both your custom structure and a trivially correct
+ * reference (the "oracle"), and assert that observable behavior matches after
+ * every op.
+ *
+ * To adapt:
+ *   1. Replace `MyStructure` and `Oracle` with your real classes.
+ *   2. Edit the `Op` discriminated union + the arbitrary to match your API.
+ *   3. Implement `applyOp` for both sides.
+ *   4. Implement `observableState` so the assert compares everything the caller can see.
+ *   5. Implement `checkInvariants` to encode the structure's defining property.
+ *
+ * Run:
+ *   npm install --save-dev fast-check vitest @types/node
+ *   npx vitest run scripts/proptest.ts
+ *
+ * (Vitest is used here; the test bodies translate cleanly to Jest by swapping
+ * the imports.)
+ */
 
-import { describe, test, expect } from 'vitest'
-import fc from 'fast-check'
+import { describe, test, expect } from "vitest";
+import fc from "fast-check";
 
-// ─── (1) Replace with the candidate ───
-class MyStructure<V> {
-  private data = new Map<number, V>()
-  insert(k: number, v: V): void { this.data.set(k, v) }
-  delete(k: number): boolean { return this.data.delete(k) }
-  lookup(k: number): V | undefined { return this.data.get(k) }
-  size(): number { return this.data.size }
+// ---------------------------------------------------------------------------
+// 1. Replace these with your real types.
+// ---------------------------------------------------------------------------
 
-  // Encode the structure's defining invariant(s) here. Return false on violation.
+class MyStructure {
+  private items = new Map<number, string>();
+
+  insert(k: number, v: string): void {
+    this.items.set(k, v);
+  }
+
+  delete(k: number): void {
+    this.items.delete(k);
+  }
+
+  lookup(k: number): string | undefined {
+    return this.items.get(k);
+  }
+
+  iterSorted(): [number, string][] {
+    return Array.from(this.items.entries()).sort(([a], [b]) => a - b);
+  }
+
   checkInvariants(): boolean {
-    // e.g., for BST: in-order traversal is strictly sorted
-    // for heap: every parent ≤ children
-    // for hash table: load factor ≤ configured max; all inserted keys retrievable
-    return true
+    // Encode the structure's defining property here.
+    for (const [k, v] of this.items.entries()) {
+      if (typeof k !== "number" || typeof v !== "string") return false;
+    }
+    return true;
   }
 }
 
-// ─── (2) Reference: trivially correct, slow is fine ───
-class OracleImpl<V> {
-  private data: Array<[number, V]> = []
-  insert(k: number, v: V): void {
-    const i = this.data.findIndex(([kk]) => kk === k)
-    if (i >= 0) this.data[i] = [k, v]
-    else this.data.push([k, v])
+class Oracle {
+  private items = new Map<number, string>();
+
+  insert(k: number, v: string): void {
+    this.items.set(k, v);
   }
-  delete(k: number): boolean {
-    const i = this.data.findIndex(([kk]) => kk === k)
-    if (i < 0) return false
-    this.data.splice(i, 1)
-    return true
+
+  delete(k: number): void {
+    this.items.delete(k);
   }
-  lookup(k: number): V | undefined {
-    return this.data.find(([kk]) => kk === k)?.[1]
+
+  lookup(k: number): string | undefined {
+    return this.items.get(k);
   }
-  size(): number { return this.data.length }
+
+  iterSorted(): [number, string][] {
+    return Array.from(this.items.entries()).sort(([a], [b]) => a - b);
+  }
 }
 
-// ─── (3) Operations the property test will generate ───
+// ---------------------------------------------------------------------------
+// 2. Op model. Edit to match your API.
+// ---------------------------------------------------------------------------
+
 type Op =
-  | { tag: 'insert'; k: number; v: number }
-  | { tag: 'delete'; k: number }
-  | { tag: 'lookup'; k: number }
+  | { kind: "insert"; k: number; v: string }
+  | { kind: "delete"; k: number }
+  | { kind: "lookup"; k: number }
+  | { kind: "iter" };
 
 const opArb: fc.Arbitrary<Op> = fc.oneof(
-  fc.record({ tag: fc.constant('insert' as const), k: fc.integer(), v: fc.integer() }),
-  fc.record({ tag: fc.constant('delete' as const), k: fc.integer() }),
-  fc.record({ tag: fc.constant('lookup' as const), k: fc.integer() }),
-)
+  fc.record({
+    kind: fc.constant("insert" as const),
+    k: fc.integer({ min: -100, max: 100 }),
+    v: fc.string({ maxLength: 8 }),
+  }),
+  fc.record({
+    kind: fc.constant("delete" as const),
+    k: fc.integer({ min: -100, max: 100 }),
+  }),
+  fc.record({
+    kind: fc.constant("lookup" as const),
+    k: fc.integer({ min: -100, max: 100 }),
+  }),
+  fc.record({
+    kind: fc.constant("iter" as const),
+  }),
+);
 
-function applyAndCompare(op: Op, c: MyStructure<number>, o: OracleImpl<number>) {
-  switch (op.tag) {
-    case 'insert':
-      c.insert(op.k, op.v); o.insert(op.k, op.v); break
-    case 'delete': {
-      const a = c.delete(op.k); const b = o.delete(op.k)
-      expect(a).toBe(b); break
-    }
-    case 'lookup': {
-      const a = c.lookup(op.k); const b = o.lookup(op.k)
-      expect(a).toEqual(b); break
-    }
+// ---------------------------------------------------------------------------
+// 3. Apply + observe.
+// ---------------------------------------------------------------------------
+
+function applyOp(s: MyStructure | Oracle, op: Op): unknown {
+  switch (op.kind) {
+    case "insert":
+      s.insert(op.k, op.v);
+      return undefined;
+    case "delete":
+      s.delete(op.k);
+      return undefined;
+    case "lookup":
+      return s.lookup(op.k);
+    case "iter":
+      return s.iterSorted();
   }
-  expect(c.size()).toBe(o.size())
-  expect(c.checkInvariants()).toBe(true)
 }
 
-// ─── (4) The actual property ───
-describe('MyStructure ↔ Oracle', () => {
-  test('any sequence of ops preserves observable behavior and invariants', () => {
+function observableState(s: MyStructure | Oracle): [number, string][] {
+  return s.iterSorted();
+}
+
+// ---------------------------------------------------------------------------
+// 4. The actual property tests.
+// ---------------------------------------------------------------------------
+
+describe("MyStructure (proptest scaffold)", () => {
+  test("oracle pattern: observable behavior matches a reference impl", () => {
     fc.assert(
       fc.property(fc.array(opArb, { maxLength: 200 }), (ops) => {
-        const c = new MyStructure<number>()
-        const o = new OracleImpl<number>()
-        for (const op of ops) applyAndCompare(op, c, o)
+        const custom = new MyStructure();
+        const oracle = new Oracle();
+        for (const op of ops) {
+          const rCustom = applyOp(custom, op);
+          const rOracle = applyOp(oracle, op);
+          expect(rCustom).toEqual(rOracle);
+          expect(custom.checkInvariants()).toBe(true);
+        }
+        expect(observableState(custom)).toEqual(observableState(oracle));
       }),
-      { numRuns: 500, verbose: true },
-    )
-  })
+      { numRuns: 200 },
+    );
+  });
 
-  test('insert/delete roundtrip leaves structure empty', () => {
+  test("invariants hold after every op", () => {
     fc.assert(
-      fc.property(fc.uniqueArray(fc.integer()), (keys) => {
-        const c = new MyStructure<number>()
-        for (const k of keys) c.insert(k, k)
-        for (const k of keys) c.delete(k)
-        expect(c.size()).toBe(0)
-        expect(c.checkInvariants()).toBe(true)
+      fc.property(fc.array(opArb, { maxLength: 200 }), (ops) => {
+        const s = new MyStructure();
+        for (const op of ops) {
+          applyOp(s, op);
+          expect(s.checkInvariants()).toBe(true);
+        }
       }),
-    )
-  })
-})
+      { numRuns: 200 },
+    );
+  });
+
+  test("insert/delete roundtrip", () => {
+    fc.assert(
+      fc.property(
+        fc.array(
+          fc.tuple(fc.integer({ min: -100, max: 100 }), fc.string({ maxLength: 8 })),
+          { maxLength: 200 },
+        ),
+        (items) => {
+          const s = new MyStructure();
+          const dedup = new Map<number, string>();
+          for (const [k, v] of items) {
+            s.insert(k, v);
+            dedup.set(k, v);
+          }
+          for (const [k, v] of dedup) {
+            expect(s.lookup(k)).toBe(v);
+          }
+          for (const k of dedup.keys()) {
+            s.delete(k);
+          }
+          for (const k of dedup.keys()) {
+            expect(s.lookup(k)).toBeUndefined();
+          }
+        },
+      ),
+      { numRuns: 100 },
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5. Stateful (fc.commands) version — sometimes finds bugs the flat
+//    `fc.property` style misses. Use when ops interact strongly with state.
+// ---------------------------------------------------------------------------
+
+type Model = { keys: Map<number, string> };
+
+class InsertCommand implements fc.Command<Model, MyStructure> {
+  constructor(readonly k: number, readonly v: string) {}
+  check(_m: Readonly<Model>): boolean {
+    return true;
+  }
+  run(m: Model, s: MyStructure): void {
+    s.insert(this.k, this.v);
+    m.keys.set(this.k, this.v);
+    expect(s.checkInvariants()).toBe(true);
+  }
+  toString(): string {
+    return `insert(${this.k}, ${JSON.stringify(this.v)})`;
+  }
+}
+
+class DeleteCommand implements fc.Command<Model, MyStructure> {
+  constructor(readonly k: number) {}
+  check(_m: Readonly<Model>): boolean {
+    return true;
+  }
+  run(m: Model, s: MyStructure): void {
+    s.delete(this.k);
+    m.keys.delete(this.k);
+    expect(s.checkInvariants()).toBe(true);
+  }
+  toString(): string {
+    return `delete(${this.k})`;
+  }
+}
+
+class LookupCommand implements fc.Command<Model, MyStructure> {
+  constructor(readonly k: number) {}
+  check(_m: Readonly<Model>): boolean {
+    return true;
+  }
+  run(m: Model, s: MyStructure): void {
+    expect(s.lookup(this.k)).toEqual(m.keys.get(this.k));
+  }
+  toString(): string {
+    return `lookup(${this.k})`;
+  }
+}
+
+const commandArb = fc.commands(
+  [
+    fc
+      .tuple(fc.integer({ min: -100, max: 100 }), fc.string({ maxLength: 8 }))
+      .map(([k, v]) => new InsertCommand(k, v)),
+    fc.integer({ min: -100, max: 100 }).map((k) => new DeleteCommand(k)),
+    fc.integer({ min: -100, max: 100 }).map((k) => new LookupCommand(k)),
+  ],
+  { maxCommands: 200 },
+);
+
+describe("MyStructure (stateful)", () => {
+  test("stateful command sequences preserve invariants", () => {
+    fc.assert(
+      fc.property(commandArb, (cmds) => {
+        const setup = () => ({ model: { keys: new Map<number, string>() }, real: new MyStructure() });
+        fc.modelRun(setup, cmds);
+      }),
+      { numRuns: 200 },
+    );
+  });
+});
